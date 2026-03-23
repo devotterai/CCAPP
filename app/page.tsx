@@ -174,7 +174,13 @@ export default function Dashboard() {
     }
   };
 
-  // Handle call
+  // Handle call using Twilio Voice SDK (browser-based)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const deviceRef = useRef<any>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const activeCallRef = useRef<any>(null);
+  const [callActive, setCallActive] = useState(false);
+
   const handleCall = async () => {
     if (!selectedLead?.phone) {
       setActionStatus("No phone number available");
@@ -182,36 +188,86 @@ export default function Dashboard() {
       return;
     }
 
+    // If a call is already active, hang up
+    if (callActive && activeCallRef.current) {
+      activeCallRef.current.disconnect();
+      activeCallRef.current = null;
+      setCallActive(false);
+      setCalling(false);
+      setActionStatus("Call ended");
+      announce("Call ended");
+      return;
+    }
+
     setCalling(true);
-    setActionStatus("Initiating call...");
+    setActionStatus("Connecting call...");
     announce(`Calling ${selectedLead.firstName} ${selectedLead.lastName} at ${selectedLead.phone}`);
 
     try {
-      const res = await fetch("/api/call", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          to: selectedLead.phone,
-          leadId: selectedLead.id,
-        }),
-      });
+      // Get access token
+      const tokenRes = await fetch("/api/token");
+      const tokenData = await tokenRes.json();
 
-      const data = await res.json();
-
-      if (!res.ok) {
-        setActionStatus(data.error || "Call failed");
-        announce(data.error || "Call failed");
+      if (!tokenRes.ok) {
+        setActionStatus(tokenData.error || "Failed to get call token");
+        announce(tokenData.error || "Failed to get call token");
+        setCalling(false);
         return;
       }
 
-      setActionStatus("Call connected successfully");
-      announce("Call connected successfully");
-      fetchLeads();
-    } catch {
-      setActionStatus("Call failed — check Twilio settings");
+      // Import Twilio Voice SDK dynamically (client-side only)
+      const { Device } = await import("@twilio/voice-sdk");
+
+      // Initialize device if needed
+      if (!deviceRef.current) {
+        deviceRef.current = new Device(tokenData.token, {
+          logLevel: 1,
+        });
+      } else {
+        // Update token
+        deviceRef.current.updateToken(tokenData.token);
+      }
+
+      // Make the call
+      const call = await deviceRef.current.connect({
+        params: { To: selectedLead.phone },
+      });
+
+      activeCallRef.current = call;
+      setCallActive(true);
+      setActionStatus("Call connected — speaking through browser");
+      announce("Call connected. You are now speaking through your browser.");
+
+      call.on("disconnect", () => {
+        activeCallRef.current = null;
+        setCallActive(false);
+        setCalling(false);
+        setActionStatus("Call ended");
+        announce("Call ended");
+      });
+
+      call.on("cancel", () => {
+        activeCallRef.current = null;
+        setCallActive(false);
+        setCalling(false);
+        setActionStatus("Call cancelled");
+        announce("Call cancelled");
+      });
+
+      // Update lead disposition
+      if (selectedLead.id) {
+        fetch(`/api/leads/${selectedLead.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ disposition: "CALLED_NO_ANSWER" }),
+        }).then(() => fetchLeads()).catch(console.error);
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Call failed";
+      setActionStatus(`Call failed: ${message}`);
       announce("Call failed. Check your Twilio settings.");
-    } finally {
       setCalling(false);
+      setCallActive(false);
     }
   };
 
@@ -679,7 +735,7 @@ export default function Dashboard() {
                 style={{ flex: 1, fontSize: "1rem", padding: "14px 20px" }}
                 aria-keyshortcuts="Control+Shift+C"
               >
-                {calling ? "Calling..." : "📞 Call Now"}
+                {calling ? (callActive ? "🔴 Hang Up" : "Connecting...") : "📞 Call Now"}
               </button>
 
               <button

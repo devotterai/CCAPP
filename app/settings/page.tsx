@@ -217,19 +217,54 @@ export default function SettingsPage() {
           </div>
 
           <div>
-            <label htmlFor="agent-phone" className="form-label">
-              Your Phone Number <span aria-hidden="true">*</span>
+            <label htmlFor="twilio-api-key" className="form-label">
+              API Key SID <span aria-hidden="true">*</span>
             </label>
             <p style={{ fontSize: "0.75rem", color: "var(--color-text-muted)", margin: "0 0 6px" }}>
-              Your personal phone number. When you click &quot;Call Now&quot;, Twilio will call your phone first, then connect you to the lead.
+              Create one at Twilio Console → Account → API keys &amp; tokens.
             </p>
             <input
-              id="agent-phone"
-              type="tel"
+              id="twilio-api-key"
+              type="text"
               className="form-input"
-              value={settings[SETTING_KEYS.AGENT_PHONE_NUMBER] || ""}
-              onChange={(e) => updateSetting(SETTING_KEYS.AGENT_PHONE_NUMBER, e.target.value)}
-              placeholder="+1234567890"
+              value={settings[SETTING_KEYS.TWILIO_API_KEY_SID] || ""}
+              onChange={(e) => updateSetting(SETTING_KEYS.TWILIO_API_KEY_SID, e.target.value)}
+              placeholder="SK..."
+              aria-required="true"
+              autoComplete="off"
+            />
+          </div>
+
+          <div>
+            <label htmlFor="twilio-api-secret" className="form-label">
+              API Key Secret <span aria-hidden="true">*</span>
+            </label>
+            <input
+              id="twilio-api-secret"
+              type="password"
+              className="form-input"
+              value={settings[SETTING_KEYS.TWILIO_API_KEY_SECRET] || ""}
+              onChange={(e) => updateSetting(SETTING_KEYS.TWILIO_API_KEY_SECRET, e.target.value)}
+              placeholder="Your API key secret"
+              aria-required="true"
+              autoComplete="off"
+            />
+          </div>
+
+          <div>
+            <label htmlFor="twilio-twiml-app" className="form-label">
+              TwiML App SID <span aria-hidden="true">*</span>
+            </label>
+            <p style={{ fontSize: "0.75rem", color: "var(--color-text-muted)", margin: "0 0 6px" }}>
+              Create a TwiML App at Twilio Console → Voice → TwiML Apps. Set the Voice Request URL to your deployed site: <code>https://ccapp1.netlify.app/api/voice</code>
+            </p>
+            <input
+              id="twilio-twiml-app"
+              type="text"
+              className="form-input"
+              value={settings[SETTING_KEYS.TWILIO_TWIML_APP_SID] || ""}
+              onChange={(e) => updateSetting(SETTING_KEYS.TWILIO_TWIML_APP_SID, e.target.value)}
+              placeholder="AP..."
               aria-required="true"
               autoComplete="off"
             />
