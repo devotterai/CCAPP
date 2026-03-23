@@ -193,6 +193,7 @@ export default function Dashboard() {
     status: string;
     duration: number;
     notes: string;
+    recordingUrl: string;
     startedAt: string;
     endedAt: string | null;
   };
@@ -986,6 +987,20 @@ export default function Dashboard() {
                       {entry.duration > 0 && (
                         <div style={{ color: "var(--color-text-muted)", marginTop: "4px" }}>
                           Duration: {Math.floor(entry.duration / 60)}m {entry.duration % 60}s
+                        </div>
+                      )}
+                      {entry.recordingUrl && (
+                        <div style={{ marginTop: "8px" }}>
+                          <audio
+                            controls
+                            preload="none"
+                            src={`/api/recording/${entry.id}`}
+                            style={{
+                              width: "100%",
+                              height: "32px",
+                              borderRadius: "4px",
+                            }}
+                          />
                         </div>
                       )}
                     </div>

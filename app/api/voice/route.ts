@@ -19,7 +19,18 @@ export async function POST(request: NextRequest) {
       });
       const callerId = phoneSetting?.value || "";
 
-      const dial = twiml.dial({ callerId });
+      // Get the base URL for recording callback
+      const host = request.headers.get("host") || "";
+      const protocol = host.includes("localhost") ? "http" : "https";
+      const baseUrl = `${protocol}://${host}`;
+
+      const dial = twiml.dial({
+        callerId,
+        record: "record-from-answer-dual",
+        recordingStatusCallback: `${baseUrl}/api/recording-status`,
+        recordingStatusCallbackMethod: "POST",
+        recordingStatusCallbackEvent: ["completed"],
+      });
       dial.number(to);
     } else {
       twiml.say("No phone number specified.");

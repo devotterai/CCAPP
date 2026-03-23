@@ -40,14 +40,16 @@ model EmailTemplate {
 }
 
 model CallLog {
-  id          String   @id @default(cuid())
-  leadId      String
-  leadName    String   @default("")
-  leadPhone   String   @default("")
-  callSid     String   @default("")
-  status      String   @default("initiated")
-  duration    Int      @default(0)
-  notes       String   @default("")
-  startedAt   DateTime @default(now())
-  endedAt     DateTime?
+  id            String    @id @default(cuid())
+  leadId        String
+  leadName      String    @default("")
+  leadPhone     String    @default("")
+  callSid       String    @default("")
+  status        String    @default("initiated")
+  duration      Int       @default(0)
+  notes         String    @default("")
+  recordingSid  String    @default("")
+  recordingUrl  String    @default("")
+  startedAt     DateTime  @default(now())
+  endedAt       DateTime?
 }
