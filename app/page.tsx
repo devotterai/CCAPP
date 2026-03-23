@@ -8,6 +8,13 @@ import {
   type Lead,
   type Disposition,
 } from "@/lib/constants";
+import {
+  DEFAULT_KEYBINDINGS,
+  matchesKeybinding,
+  formatKeyDisplay,
+  KEYBINDINGS_SETTING_KEY,
+  CATEGORY_LABELS,
+} from "@/lib/keybindings";
 
 // Helper: announce to screen readers via the global live region
 function announce(message: string) {
@@ -56,6 +63,47 @@ export default function Dashboard() {
   const [emailBody, setEmailBody] = useState("");
   const [sendingEmail, setSendingEmail] = useState(false);
   const [calling, setCalling] = useState(false);
+  const [showShortcutsModal, setShowShortcutsModal] = useState(false);
+
+  // Call-related state (must be before useEffect that references them)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const deviceRef = useRef<any>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const activeCallRef = useRef<any>(null);
+  const [callActive, setCallActive] = useState(false);
+  const callLogIdRef = useRef<string>("");
+  const callStartTimeRef = useRef<Date | null>(null);
+
+  // Call history type & state
+  type CallLogEntry = {
+    id: string;
+    leadId: string;
+    leadName: string;
+    leadPhone: string;
+    callSid: string;
+    status: string;
+    duration: number;
+    notes: string;
+    recordingUrl: string;
+    startedAt: string;
+    endedAt: string | null;
+  };
+  const [callHistory, setCallHistory] = useState<CallLogEntry[]>([]);
+
+  // Notes editing state
+  const [editingNotes, setEditingNotes] = useState(false);
+  const [notesValue, setNotesValue] = useState("");
+
+  // Customizable keybindings
+  const [customBindings, setCustomBindings] = useState<Record<string, string>>({});
+  const getKey = useCallback(
+    (id: string) => {
+      if (customBindings[id]) return customBindings[id];
+      const def = DEFAULT_KEYBINDINGS.find((kb) => kb.id === id);
+      return def?.defaultKey || "";
+    },
+    [customBindings]
+  );
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const emailTriggerRef = useRef<HTMLButtonElement>(null);
@@ -84,6 +132,20 @@ export default function Dashboard() {
   useEffect(() => {
     fetchLeads();
   }, [fetchLeads]);
+
+  // Load custom keybindings from settings
+  useEffect(() => {
+    fetch("/api/settings")
+      .then((r) => r.json())
+      .then((data) => {
+        if (data && data[KEYBINDINGS_SETTING_KEY]) {
+          try {
+            setCustomBindings(JSON.parse(data[KEYBINDINGS_SETTING_KEY]));
+          } catch { /* use defaults */ }
+        }
+      })
+      .catch(console.error);
+  }, []);
 
   // Fetch templates
   useEffect(() => {
@@ -133,25 +195,145 @@ export default function Dashboard() {
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [showEmailModal]);
 
-  // Global keyboard shortcuts
+  // Comprehensive global keyboard shortcuts (keybinding-driven)
   useEffect(() => {
+    const DISPOSITION_ORDER: Disposition[] = [
+      DISPOSITIONS.NEW,
+      DISPOSITIONS.CALLED_NO_ANSWER,
+      DISPOSITIONS.LEFT_VOICEMAIL,
+      DISPOSITIONS.CALLBACK_SCHEDULED,
+      DISPOSITIONS.BOOKED,
+      DISPOSITIONS.NOT_INTERESTED,
+      DISPOSITIONS.WRONG_NUMBER,
+      DISPOSITIONS.DO_NOT_CALL,
+    ];
+
+    const STATUS_BINDING_IDS = [
+      "set_new", "set_no_answer", "set_voicemail", "set_callback",
+      "set_booked", "set_not_interested", "set_wrong_number", "set_dnc",
+    ];
+
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Ctrl+Shift+C = Call
-      if (e.ctrlKey && e.shiftKey && e.key === "C" && selectedLead) {
+      // Don't trigger shortcuts when typing in inputs (except modifier combos)
+      const tag = (e.target as HTMLElement).tagName;
+      const isInput = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+      if (isInput && !e.ctrlKey && !e.altKey) return;
+
+      // Call lead
+      if (matchesKeybinding(e, getKey("call_lead")) && selectedLead) {
         e.preventDefault();
         handleCall();
+        return;
       }
-      // Ctrl+Shift+E = Email
-      if (e.ctrlKey && e.shiftKey && e.key === "E" && selectedLead) {
+
+      // Hang up
+      if (matchesKeybinding(e, getKey("hang_up")) && callActive) {
+        e.preventDefault();
+        handleHangUp();
+        return;
+      }
+
+      // Email
+      if (matchesKeybinding(e, getKey("send_email")) && selectedLead) {
         e.preventDefault();
         openEmailModal();
+        return;
+      }
+
+      // Focus search
+      if (matchesKeybinding(e, getKey("focus_search"))) {
+        e.preventDefault();
+        document.getElementById("search-leads")?.focus();
+        announce("Search field focused");
+        return;
+      }
+
+      // Navigation: go to pages
+      if (matchesKeybinding(e, getKey("go_dashboard"))) {
+        e.preventDefault();
+        window.location.href = "/";
+        return;
+      }
+      if (matchesKeybinding(e, getKey("go_history"))) {
+        e.preventDefault();
+        window.location.href = "/history";
+        return;
+      }
+      if (matchesKeybinding(e, getKey("go_settings"))) {
+        e.preventDefault();
+        window.location.href = "/settings";
+        return;
+      }
+
+      // Next / Previous lead
+      if (matchesKeybinding(e, getKey("next_lead")) && filteredLeads.length > 0) {
+        e.preventDefault();
+        const currentIndex = selectedLead ? filteredLeads.findIndex((l) => l.id === selectedLead.id) : -1;
+        const nextIndex = Math.min(currentIndex + 1, filteredLeads.length - 1);
+        const nextLead = filteredLeads[nextIndex];
+        setSelectedLead(nextLead);
+        announce(`Selected ${nextLead.firstName} ${nextLead.lastName}`);
+        return;
+      }
+      if (matchesKeybinding(e, getKey("prev_lead")) && filteredLeads.length > 0) {
+        e.preventDefault();
+        const currentIndex = selectedLead ? filteredLeads.findIndex((l) => l.id === selectedLead.id) : filteredLeads.length;
+        const prevIndex = Math.max(currentIndex - 1, 0);
+        const prevLead = filteredLeads[prevIndex];
+        setSelectedLead(prevLead);
+        announce(`Selected ${prevLead.firstName} ${prevLead.lastName}`);
+        return;
+      }
+
+      // Edit notes
+      if (matchesKeybinding(e, getKey("edit_notes")) && selectedLead) {
+        e.preventDefault();
+        setEditingNotes(true);
+        setNotesValue(selectedLead.notes || "");
+        announce("Editing notes");
+        setTimeout(() => document.getElementById("notes-editor")?.focus(), 50);
+        return;
+      }
+
+      // Save notes
+      if (matchesKeybinding(e, getKey("save_notes")) && editingNotes) {
+        e.preventDefault();
+        saveNotes();
+        return;
+      }
+
+      // Status shortcuts (Alt+1 through Alt+8)
+      for (let i = 0; i < STATUS_BINDING_IDS.length; i++) {
+        if (matchesKeybinding(e, getKey(STATUS_BINDING_IDS[i])) && selectedLead) {
+          e.preventDefault();
+          updateDisposition(selectedLead.id, DISPOSITION_ORDER[i]);
+          return;
+        }
+      }
+
+      // Import CSV
+      if (matchesKeybinding(e, getKey("import_csv"))) {
+        e.preventDefault();
+        fileInputRef.current?.click();
+        return;
+      }
+
+      // Show shortcuts help
+      if (matchesKeybinding(e, getKey("show_shortcuts"))) {
+        e.preventDefault();
+        setShowShortcutsModal((prev) => !prev);
+        const shortcuts = DEFAULT_KEYBINDINGS.map(
+          (kb) => `${kb.label}: ${formatKeyDisplay(customBindings[kb.id] || kb.defaultKey)}`
+        ).join(". ");
+        announce(`Keyboard shortcuts: ${shortcuts}`);
+        return;
       }
     };
 
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedLead]);
+  }, [selectedLead, callActive, editingNotes, filteredLeads, customBindings, getKey]);
 
   // Handle disposition update
   const updateDisposition = async (leadId: string, disposition: Disposition) => {
@@ -177,33 +359,6 @@ export default function Dashboard() {
   };
 
   // Handle call using Twilio Voice SDK (browser-based)
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const deviceRef = useRef<any>(null);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const activeCallRef = useRef<any>(null);
-  const [callActive, setCallActive] = useState(false);
-  const callLogIdRef = useRef<string>("");
-  const callStartTimeRef = useRef<Date | null>(null);
-
-  // Call history
-  type CallLogEntry = {
-    id: string;
-    leadId: string;
-    leadName: string;
-    leadPhone: string;
-    callSid: string;
-    status: string;
-    duration: number;
-    notes: string;
-    recordingUrl: string;
-    startedAt: string;
-    endedAt: string | null;
-  };
-  const [callHistory, setCallHistory] = useState<CallLogEntry[]>([]);
-
-  // Notes editing
-  const [editingNotes, setEditingNotes] = useState(false);
-  const [notesValue, setNotesValue] = useState("");
 
   // Fetch call history for selected lead
   useEffect(() => {
@@ -871,9 +1026,9 @@ export default function Dashboard() {
                 className="btn btn-success"
                 onClick={handleCall}
                 disabled={calling && !callActive || !selectedLead.phone}
-                aria-label={`Call ${selectedLead.firstName} ${selectedLead.lastName} at ${selectedLead.phone || "no number"}. Keyboard shortcut: Control plus Shift plus C`}
+                aria-label={`${callActive ? 'Hang up' : 'Call'} ${selectedLead.firstName} ${selectedLead.lastName} at ${selectedLead.phone || "no number"}. Keyboard shortcut: ${formatKeyDisplay(getKey(callActive ? 'hang_up' : 'call_lead'))}`}
                 style={{ flex: 1, fontSize: "1rem", padding: "14px 20px" }}
-                aria-keyshortcuts="Control+Shift+C"
+                aria-keyshortcuts={getKey(callActive ? 'hang_up' : 'call_lead')}
               >
                 {calling ? (callActive ? "🔴 Hang Up" : "Connecting...") : "📞 Call Now"}
               </button>
@@ -900,8 +1055,10 @@ export default function Dashboard() {
                 marginBottom: "16px",
               }}
             >
-              <kbd style={{ padding: "2px 6px", background: "var(--color-bg-tertiary)", borderRadius: "4px" }}>Ctrl+Shift+C</kbd> Call •{" "}
-              <kbd style={{ padding: "2px 6px", background: "var(--color-bg-tertiary)", borderRadius: "4px" }}>Ctrl+Shift+E</kbd> Email
+              <kbd style={{ padding: "2px 6px", background: "var(--color-bg-tertiary)", borderRadius: "4px" }}>{formatKeyDisplay(getKey('call_lead'))}</kbd> Call •{" "}
+              <kbd style={{ padding: "2px 6px", background: "var(--color-bg-tertiary)", borderRadius: "4px" }}>{formatKeyDisplay(getKey('hang_up'))}</kbd> Hang Up •{" "}
+              <kbd style={{ padding: "2px 6px", background: "var(--color-bg-tertiary)", borderRadius: "4px" }}>{formatKeyDisplay(getKey('send_email'))}</kbd> Email •{" "}
+              <kbd style={{ padding: "2px 6px", background: "var(--color-bg-tertiary)", borderRadius: "4px" }}>Shift+?</kbd> All Shortcuts
             </p>
 
             {/* Disposition buttons */}
@@ -979,11 +1136,13 @@ export default function Dashboard() {
               </div>
               {editingNotes ? (
                 <textarea
+                  id="notes-editor"
                   className="form-input"
                   value={notesValue}
                   onChange={(e) => setNotesValue(e.target.value)}
                   rows={4}
                   placeholder="Add notes about this lead..."
+                  aria-label="Lead notes editor. Press Ctrl plus Enter to save."
                   style={{ resize: "vertical", fontSize: "0.8125rem" }}
                 />
               ) : (
@@ -1180,6 +1339,89 @@ export default function Dashboard() {
                 {sendingEmail ? "Sending..." : "Send Email"}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Shortcuts Modal */}
+      {showShortcutsModal && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Keyboard shortcuts reference"
+          onClick={() => setShowShortcutsModal(false)}
+          style={{
+            position: "fixed",
+            inset: 0,
+            backgroundColor: "rgba(0,0,0,0.7)",
+            display: "flex",
+            justifyContent: "center",
+            alignItems: "center",
+            zIndex: 2000,
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: "var(--color-bg-secondary)",
+              border: "1px solid var(--color-border)",
+              borderRadius: "12px",
+              padding: "24px",
+              maxWidth: "600px",
+              width: "90%",
+              maxHeight: "80vh",
+              overflow: "auto",
+            }}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+              <h2 style={{ fontSize: "1.25rem", fontWeight: 700, margin: 0 }}>
+                ⌨️ Keyboard Shortcuts
+              </h2>
+              <button
+                className="btn btn-secondary"
+                onClick={() => setShowShortcutsModal(false)}
+                style={{ fontSize: "0.75rem", padding: "4px 10px" }}
+              >
+                Close (Esc)
+              </button>
+            </div>
+            <p style={{ fontSize: "0.8125rem", color: "var(--color-text-muted)", marginBottom: "16px" }}>
+              Customize these in Settings → Keybindings
+            </p>
+            {Object.entries(CATEGORY_LABELS).map(([catKey, catLabel]) => {
+              const bindings = DEFAULT_KEYBINDINGS.filter((kb) => kb.category === catKey);
+              if (bindings.length === 0) return null;
+              return (
+                <div key={catKey} style={{ marginBottom: "16px" }}>
+                  <h3 style={{ fontSize: "0.875rem", fontWeight: 700, color: "var(--color-accent)", marginBottom: "6px" }}>
+                    {catLabel}
+                  </h3>
+                  {bindings.map((kb) => (
+                    <div
+                      key={kb.id}
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        padding: "6px 0",
+                        borderBottom: "1px solid var(--color-border)",
+                      }}
+                    >
+                      <span style={{ fontSize: "0.8125rem" }}>{kb.label}</span>
+                      <kbd style={{
+                        padding: "3px 8px",
+                        background: "var(--color-bg-tertiary)",
+                        borderRadius: "4px",
+                        fontSize: "0.75rem",
+                        fontWeight: 600,
+                      }}>
+                        {formatKeyDisplay(customBindings[kb.id] || kb.defaultKey)}
+                      </kbd>
+                    </div>
+                  ))}
+                </div>
+              );
+            })}
           </div>
         </div>
       )}

@@ -1,7 +1,14 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { SETTING_KEYS } from "@/lib/constants";
+import {
+  DEFAULT_KEYBINDINGS,
+  formatKeyDisplay,
+  eventToKeyString,
+  KEYBINDINGS_SETTING_KEY,
+  CATEGORY_LABELS,
+} from "@/lib/keybindings";
 
 type EmailTemplate = {
   id: string;
@@ -31,11 +38,33 @@ export default function SettingsPage() {
   const [newTemplateSubject, setNewTemplateSubject] = useState("");
   const [newTemplateBody, setNewTemplateBody] = useState("");
 
+  // Keybindings
+  const [customBindings, setCustomBindings] = useState<Record<string, string>>({});
+  const [rebindingId, setRebindingId] = useState<string | null>(null);
+
+  const getKey = useCallback(
+    (id: string) => {
+      if (customBindings[id]) return customBindings[id];
+      const def = DEFAULT_KEYBINDINGS.find((kb) => kb.id === id);
+      return def?.defaultKey || "";
+    },
+    [customBindings]
+  );
+
   // Load settings and templates
   useEffect(() => {
     fetch("/api/settings")
       .then((r) => r.json())
-      .then((data) => setSettings(data && typeof data === 'object' && !data.error ? data : {}))
+      .then((data) => {
+        const d = data && typeof data === 'object' && !data.error ? data : {};
+        setSettings(d);
+        // Parse custom keybindings
+        if (d[KEYBINDINGS_SETTING_KEY]) {
+          try {
+            setCustomBindings(JSON.parse(d[KEYBINDINGS_SETTING_KEY]));
+          } catch { /* use defaults */ }
+        }
+      })
       .catch(console.error);
 
     fetch("/api/templates")
@@ -455,6 +484,155 @@ export default function SettingsPage() {
             ))}
           </ul>
         )}
+      </section>
+
+      {/* Keybindings */}
+      <section aria-labelledby="keybindings-heading" style={{ marginTop: "48px" }}>
+        <h3 id="keybindings-heading" style={{ fontSize: "1.5rem", fontWeight: 800, marginBottom: "24px" }}>
+          ⌨️ Keybindings
+        </h3>
+        <p style={{ fontSize: "0.8125rem", color: "var(--color-text-muted)", marginBottom: "16px" }}>
+          Click &quot;Rebind&quot; and press a new key combination to change a shortcut. Changes are saved automatically.
+        </p>
+
+        <div style={{ marginBottom: "16px" }}>
+          <button
+            className="btn btn-secondary"
+            onClick={async () => {
+              setCustomBindings({});
+              // Save empty bindings
+              const updated = { ...settings };
+              updated[KEYBINDINGS_SETTING_KEY] = JSON.stringify({});
+              await fetch("/api/settings", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(updated),
+              });
+              setSettings(updated);
+              announce("All keybindings reset to defaults");
+              setStatus("Keybindings reset to defaults");
+            }}
+            style={{ fontSize: "0.8125rem", padding: "8px 16px" }}
+          >
+            Reset All to Defaults
+          </button>
+        </div>
+
+        {Object.entries(CATEGORY_LABELS).map(([catKey, catLabel]) => {
+          const bindings = DEFAULT_KEYBINDINGS.filter((kb) => kb.category === catKey);
+          if (bindings.length === 0) return null;
+          return (
+            <div key={catKey} className="card" style={{ marginBottom: "16px" }}>
+              <h4 style={{ fontSize: "1rem", fontWeight: 700, margin: "0 0 12px", color: "var(--color-accent)" }}>
+                {catLabel}
+              </h4>
+              {bindings.map((kb) => (
+                <div
+                  key={kb.id}
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    padding: "8px 0",
+                    borderBottom: "1px solid var(--color-border)",
+                    gap: "12px",
+                  }}
+                >
+                  <div style={{ flex: "1 1 auto" }}>
+                    <div style={{ fontWeight: 600, fontSize: "0.875rem" }}>{kb.label}</div>
+                    <div style={{ fontSize: "0.75rem", color: "var(--color-text-muted)" }}>{kb.description}</div>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: "8px", flexShrink: 0 }}>
+                    {rebindingId === kb.id ? (
+                      <kbd
+                        tabIndex={0}
+                        autoFocus
+                        onKeyDown={async (e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          const keyStr = eventToKeyString(e.nativeEvent);
+                          if (!keyStr) return;
+                          const newBindings = { ...customBindings, [kb.id]: keyStr };
+                          setCustomBindings(newBindings);
+                          setRebindingId(null);
+                          // Persist
+                          const updated = { ...settings };
+                          updated[KEYBINDINGS_SETTING_KEY] = JSON.stringify(newBindings);
+                          await fetch("/api/settings", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify(updated),
+                          });
+                          setSettings(updated);
+                          announce(`${kb.label} rebound to ${keyStr}`);
+                          setStatus(`${kb.label} rebound to ${keyStr}`);
+                        }}
+                        onBlur={() => setRebindingId(null)}
+                        style={{
+                          padding: "6px 14px",
+                          background: "var(--color-accent)",
+                          color: "#000",
+                          borderRadius: "6px",
+                          fontSize: "0.8125rem",
+                          fontWeight: 700,
+                          border: "2px solid var(--color-accent)",
+                          cursor: "default",
+                          animation: "pulse 1s infinite",
+                        }}
+                        aria-label={`Press a key combination to rebind ${kb.label}`}
+                      >
+                        Press keys...
+                      </kbd>
+                    ) : (
+                      <>
+                        <kbd style={{
+                          padding: "4px 10px",
+                          background: "var(--color-bg-tertiary)",
+                          borderRadius: "4px",
+                          fontSize: "0.75rem",
+                          fontWeight: 600,
+                        }}>
+                          {formatKeyDisplay(getKey(kb.id))}
+                        </kbd>
+                        <button
+                          className="btn btn-secondary"
+                          onClick={() => setRebindingId(kb.id)}
+                          style={{ fontSize: "0.7rem", padding: "4px 8px", minHeight: "28px", minWidth: "auto" }}
+                          aria-label={`Rebind ${kb.label}, currently ${formatKeyDisplay(getKey(kb.id))}`}
+                        >
+                          Rebind
+                        </button>
+                        {customBindings[kb.id] && (
+                          <button
+                            className="btn btn-danger"
+                            onClick={async () => {
+                              const newBindings = { ...customBindings };
+                              delete newBindings[kb.id];
+                              setCustomBindings(newBindings);
+                              const updated = { ...settings };
+                              updated[KEYBINDINGS_SETTING_KEY] = JSON.stringify(newBindings);
+                              await fetch("/api/settings", {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify(updated),
+                              });
+                              setSettings(updated);
+                              announce(`${kb.label} reset to default ${kb.defaultKey}`);
+                            }}
+                            style={{ fontSize: "0.65rem", padding: "2px 6px", minHeight: "24px", minWidth: "auto" }}
+                            aria-label={`Reset ${kb.label} to default`}
+                          >
+                            ✕
+                          </button>
+                        )}
+                      </>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          );
+        })}
       </section>
     </div>
   );
