@@ -180,6 +180,99 @@ export default function Dashboard() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const activeCallRef = useRef<any>(null);
   const [callActive, setCallActive] = useState(false);
+  const callLogIdRef = useRef<string>("");
+  const callStartTimeRef = useRef<Date | null>(null);
+
+  // Call history
+  type CallLogEntry = {
+    id: string;
+    leadId: string;
+    leadName: string;
+    leadPhone: string;
+    callSid: string;
+    status: string;
+    duration: number;
+    notes: string;
+    startedAt: string;
+    endedAt: string | null;
+  };
+  const [callHistory, setCallHistory] = useState<CallLogEntry[]>([]);
+
+  // Notes editing
+  const [editingNotes, setEditingNotes] = useState(false);
+  const [notesValue, setNotesValue] = useState("");
+
+  // Fetch call history for selected lead
+  useEffect(() => {
+    if (selectedLead) {
+      fetch(`/api/calls?leadId=${selectedLead.id}`)
+        .then((r) => r.json())
+        .then((data) => setCallHistory(Array.isArray(data) ? data : []))
+        .catch(console.error);
+      setNotesValue(selectedLead.notes || "");
+      setEditingNotes(false);
+    } else {
+      setCallHistory([]);
+      setNotesValue("");
+    }
+  }, [selectedLead]);
+
+  // Save notes
+  const saveNotes = async () => {
+    if (!selectedLead) return;
+    try {
+      const res = await fetch(`/api/leads/${selectedLead.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ notes: notesValue }),
+      });
+      if (!res.ok) throw new Error("Failed to save notes");
+      const updated = await res.json();
+      setLeads((prev) => prev.map((l) => (l.id === selectedLead.id ? updated : l)));
+      setSelectedLead(updated);
+      setEditingNotes(false);
+      setActionStatus("Notes saved");
+      announce("Notes saved");
+    } catch {
+      setActionStatus("Failed to save notes");
+    }
+  };
+
+  const handleHangUp = () => {
+    if (activeCallRef.current) {
+      activeCallRef.current.disconnect();
+    }
+    activeCallRef.current = null;
+    setCallActive(false);
+    setCalling(false);
+
+    // Update call log with end time
+    if (callLogIdRef.current && callStartTimeRef.current) {
+      const duration = Math.round((Date.now() - callStartTimeRef.current.getTime()) / 1000);
+      fetch("/api/calls", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: callLogIdRef.current,
+          status: "completed",
+          duration,
+          endedAt: new Date().toISOString(),
+        }),
+      }).then(() => {
+        if (selectedLead) {
+          fetch(`/api/calls?leadId=${selectedLead.id}`)
+            .then((r) => r.json())
+            .then((data) => setCallHistory(Array.isArray(data) ? data : []))
+            .catch(console.error);
+        }
+      }).catch(console.error);
+      callLogIdRef.current = "";
+      callStartTimeRef.current = null;
+    }
+
+    setActionStatus("Call ended");
+    announce("Call ended");
+  };
 
   const handleCall = async () => {
     if (!selectedLead?.phone) {
@@ -189,13 +282,8 @@ export default function Dashboard() {
     }
 
     // If a call is already active, hang up
-    if (callActive && activeCallRef.current) {
-      activeCallRef.current.disconnect();
-      activeCallRef.current = null;
-      setCallActive(false);
-      setCalling(false);
-      setActionStatus("Call ended");
-      announce("Call ended");
+    if (callActive) {
+      handleHangUp();
       return;
     }
 
@@ -234,16 +322,30 @@ export default function Dashboard() {
       });
 
       activeCallRef.current = call;
+      callStartTimeRef.current = new Date();
       setCallActive(true);
       setActionStatus("Call connected — speaking through browser");
       announce("Call connected. You are now speaking through your browser.");
 
+      // Create call log entry (NO auto-disposition change)
+      try {
+        const logRes = await fetch("/api/calls", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            leadId: selectedLead.id,
+            leadName: `${selectedLead.firstName} ${selectedLead.lastName}`,
+            leadPhone: selectedLead.phone,
+            callSid: call.parameters?.CallSid || "",
+            status: "in-progress",
+          }),
+        });
+        const logData = await logRes.json();
+        callLogIdRef.current = logData.id || "";
+      } catch { /* non-critical */ }
+
       call.on("disconnect", () => {
-        activeCallRef.current = null;
-        setCallActive(false);
-        setCalling(false);
-        setActionStatus("Call ended");
-        announce("Call ended");
+        handleHangUp();
       });
 
       call.on("cancel", () => {
@@ -254,14 +356,6 @@ export default function Dashboard() {
         announce("Call cancelled");
       });
 
-      // Update lead disposition
-      if (selectedLead.id) {
-        fetch(`/api/leads/${selectedLead.id}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ disposition: "CALLED_NO_ANSWER" }),
-        }).then(() => fetchLeads()).catch(console.error);
-      }
     } catch (err) {
       const message = err instanceof Error ? err.message : "Call failed";
       setActionStatus(`Call failed: ${message}`);
@@ -802,6 +896,102 @@ export default function Dashboard() {
                   </button>
                 ))}
               </div>
+            </div>
+
+            {/* Notes */}
+            <div className="card" style={{ marginTop: "16px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+                <h3 style={{ fontSize: "0.875rem", fontWeight: 700, margin: 0 }}>
+                  📝 Notes
+                </h3>
+                {!editingNotes ? (
+                  <button
+                    className="btn btn-secondary"
+                    onClick={() => setEditingNotes(true)}
+                    style={{ fontSize: "0.75rem", padding: "4px 10px" }}
+                  >
+                    Edit
+                  </button>
+                ) : (
+                  <div style={{ display: "flex", gap: "6px" }}>
+                    <button
+                      className="btn btn-success"
+                      onClick={saveNotes}
+                      style={{ fontSize: "0.75rem", padding: "4px 10px" }}
+                    >
+                      Save
+                    </button>
+                    <button
+                      className="btn btn-secondary"
+                      onClick={() => { setEditingNotes(false); setNotesValue(selectedLead.notes || ""); }}
+                      style={{ fontSize: "0.75rem", padding: "4px 10px" }}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                )}
+              </div>
+              {editingNotes ? (
+                <textarea
+                  className="form-input"
+                  value={notesValue}
+                  onChange={(e) => setNotesValue(e.target.value)}
+                  rows={4}
+                  placeholder="Add notes about this lead..."
+                  style={{ resize: "vertical", fontSize: "0.8125rem" }}
+                />
+              ) : (
+                <p style={{ fontSize: "0.8125rem", color: notesValue ? "var(--color-text-secondary)" : "var(--color-text-muted)", margin: 0, whiteSpace: "pre-wrap" }}>
+                  {notesValue || "No notes yet. Click Edit to add some."}
+                </p>
+              )}
+            </div>
+
+            {/* Call History */}
+            <div className="card" style={{ marginTop: "16px" }}>
+              <h3 style={{ fontSize: "0.875rem", fontWeight: 700, marginBottom: "12px", margin: "0 0 12px" }}>
+                📞 Call History
+              </h3>
+              {callHistory.length === 0 ? (
+                <p style={{ fontSize: "0.8125rem", color: "var(--color-text-muted)", margin: 0 }}>
+                  No calls yet.
+                </p>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                  {callHistory.map((entry) => (
+                    <div
+                      key={entry.id}
+                      style={{
+                        padding: "10px 12px",
+                        borderRadius: "6px",
+                        backgroundColor: "var(--color-bg-secondary)",
+                        border: "1px solid var(--color-border)",
+                        fontSize: "0.8125rem",
+                      }}
+                    >
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <span style={{ fontWeight: 600 }}>
+                          {new Date(entry.startedAt).toLocaleDateString()} {new Date(entry.startedAt).toLocaleTimeString()}
+                        </span>
+                        <span style={{
+                          fontSize: "0.75rem",
+                          padding: "2px 8px",
+                          borderRadius: "4px",
+                          backgroundColor: entry.status === "completed" ? "rgba(68, 187, 102, 0.15)" : "rgba(238, 187, 68, 0.15)",
+                          color: entry.status === "completed" ? "#66dd88" : "#ddbb44",
+                        }}>
+                          {entry.status}
+                        </span>
+                      </div>
+                      {entry.duration > 0 && (
+                        <div style={{ color: "var(--color-text-muted)", marginTop: "4px" }}>
+                          Duration: {Math.floor(entry.duration / 60)}m {entry.duration % 60}s
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}  
             </div>
           </div>
         )}
