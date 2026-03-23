@@ -57,6 +57,13 @@ export default function RootLayout({
                 Dashboard
               </a>
               <a
+                href="/history"
+                className="btn btn-secondary"
+                style={{ fontSize: "0.875rem", padding: "8px 16px" }}
+              >
+                Call History
+              </a>
+              <a
                 href="/settings"
                 className="btn btn-secondary"
                 style={{ fontSize: "0.875rem", padding: "8px 16px" }}

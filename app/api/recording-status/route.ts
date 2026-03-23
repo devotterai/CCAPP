@@ -13,34 +13,58 @@ export async function POST(request: NextRequest) {
       (formData.get("RecordingDuration") as string) || "0"
     );
 
-    console.log("Recording completed:", {
-      callSid,
-      recordingSid,
-      recordingUrl,
-      recordingDuration,
+    // Log all form data for debugging
+    const allData: Record<string, string> = {};
+    formData.forEach((value, key) => {
+      allData[key] = value.toString();
     });
+    console.log("Recording status callback received:", allData);
 
-    if (callSid) {
-      // Find the call log entry by callSid and update with recording info
-      const callLog = await prisma.callLog.findFirst({
-        where: { callSid },
-      });
-
-      if (callLog) {
-        await prisma.callLog.update({
-          where: { id: callLog.id },
-          data: {
-            recordingSid,
-            recordingUrl: recordingUrl
-              ? `${recordingUrl}.mp3`
-              : "",
-            duration: recordingDuration || callLog.duration,
-          },
-        });
-      }
+    if (!recordingUrl) {
+      console.log("No recording URL received, skipping");
+      return new NextResponse("OK", { status: 200 });
     }
 
-    // Twilio expects 200 OK
+    // Try to find matching call log
+    let callLog = null;
+
+    // Strategy 1: Match by callSid
+    if (callSid) {
+      callLog = await prisma.callLog.findFirst({
+        where: { callSid },
+      });
+    }
+
+    // Strategy 2: Match by the most recent call log without a recording
+    // (fallback when browser SDK callSid differs from server-side callSid)
+    if (!callLog) {
+      callLog = await prisma.callLog.findFirst({
+        where: {
+          recordingUrl: "",
+          startedAt: {
+            // Only match calls from the last 10 minutes
+            gte: new Date(Date.now() - 10 * 60 * 1000),
+          },
+        },
+        orderBy: { startedAt: "desc" },
+      });
+    }
+
+    if (callLog) {
+      await prisma.callLog.update({
+        where: { id: callLog.id },
+        data: {
+          recordingSid,
+          recordingUrl: `${recordingUrl}.mp3`,
+          duration: recordingDuration || callLog.duration,
+          callSid: callSid || callLog.callSid,
+        },
+      });
+      console.log(`Updated call log ${callLog.id} with recording ${recordingSid}`);
+    } else {
+      console.log("No matching call log found for recording:", callSid);
+    }
+
     return new NextResponse("OK", { status: 200 });
   } catch (error) {
     console.error("Error processing recording status:", error);
