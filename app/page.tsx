@@ -61,11 +61,10 @@ export default function Dashboard() {
   const emailTriggerRef = useRef<HTMLButtonElement>(null);
   const modalRef = useRef<HTMLDivElement>(null);
 
-  // Fetch leads
+  // Fetch ALL leads (filtering is client-side for stable tab counts)
   const fetchLeads = useCallback(async () => {
     try {
       const params = new URLSearchParams();
-      if (filter !== "ALL") params.set("disposition", filter);
       if (search) params.set("search", search);
 
       const res = await fetch(`/api/leads?${params}`);
@@ -77,7 +76,10 @@ export default function Dashboard() {
     } finally {
       setLoading(false);
     }
-  }, [filter, search]);
+  }, [search]);
+
+  // Client-side filter by disposition
+  const filteredLeads = filter === "ALL" ? leads : leads.filter((l) => l.disposition === filter);
 
   useEffect(() => {
     fetchLeads();
@@ -657,7 +659,7 @@ export default function Dashboard() {
             >
               Loading leads...
             </div>
-          ) : leads.length === 0 ? (
+          ) : filteredLeads.length === 0 ? (
             <div
               style={{
                 padding: "48px",
@@ -679,7 +681,7 @@ export default function Dashboard() {
                 </tr>
               </thead>
               <tbody>
-                {leads.map((lead) => (
+                {filteredLeads.map((lead) => (
                   <tr
                     key={lead.id}
                     tabIndex={0}
@@ -868,7 +870,7 @@ export default function Dashboard() {
               <button
                 className="btn btn-success"
                 onClick={handleCall}
-                disabled={calling || !selectedLead.phone}
+                disabled={calling && !callActive || !selectedLead.phone}
                 aria-label={`Call ${selectedLead.firstName} ${selectedLead.lastName} at ${selectedLead.phone || "no number"}. Keyboard shortcut: Control plus Shift plus C`}
                 style={{ flex: 1, fontSize: "1rem", padding: "14px 20px" }}
                 aria-keyshortcuts="Control+Shift+C"
