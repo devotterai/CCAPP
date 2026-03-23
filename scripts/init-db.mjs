@@ -1,13 +1,12 @@
-// Script to initialize the SQLite database tables
-// Run with: node scripts/init-db.mjs
+// Script to initialize the database tables
+// For local dev: node scripts/init-db.mjs
+// For Turso cloud: TURSO_DATABASE_URL=libsql://... TURSO_AUTH_TOKEN=... node scripts/init-db.mjs
 import { createClient } from "@libsql/client";
-import path from "path";
-import { fileURLToPath } from "url";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const dbPath = path.join(__dirname, "..", "prisma", "dev.db");
+const url = process.env.TURSO_DATABASE_URL || process.env.DATABASE_URL || "file:prisma/dev.db";
+const authToken = process.env.TURSO_AUTH_TOKEN || undefined;
 
-const client = createClient({ url: `file:${dbPath}` });
+const client = createClient({ url, authToken });
 
 const sql = `
 CREATE TABLE IF NOT EXISTS "Lead" (
@@ -47,7 +46,7 @@ CREATE TABLE IF NOT EXISTS "EmailTemplate" (
 `;
 
 async function init() {
-  console.log("Initializing database at:", dbPath);
+  console.log("Initializing database at:", url);
 
   const statements = sql
     .split(";")
@@ -60,7 +59,6 @@ async function init() {
 
   console.log("Database initialized successfully!");
 
-  // Verify tables
   const result = await client.execute(
     "SELECT name FROM sqlite_master WHERE type='table'"
   );
