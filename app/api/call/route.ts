@@ -3,6 +3,8 @@ import { prisma } from "@/lib/prisma";
 import twilio from "twilio";
 
 // POST /api/call — initiate a Twilio call
+// Flow: Twilio calls the LEAD, and when they answer, plays a connecting message
+// then dials the AGENT (your phone). This creates a two-leg call bridging you and the lead.
 export async function POST(request: NextRequest) {
   try {
     const { to, leadId } = await request.json();
@@ -18,7 +20,12 @@ export async function POST(request: NextRequest) {
     const settings = await prisma.setting.findMany({
       where: {
         key: {
-          in: ["TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_PHONE_NUMBER"],
+          in: [
+            "TWILIO_ACCOUNT_SID",
+            "TWILIO_AUTH_TOKEN",
+            "TWILIO_PHONE_NUMBER",
+            "AGENT_PHONE_NUMBER",
+          ],
         },
       },
     });
@@ -31,6 +38,7 @@ export async function POST(request: NextRequest) {
     const accountSid = settingsMap.TWILIO_ACCOUNT_SID;
     const authToken = settingsMap.TWILIO_AUTH_TOKEN;
     const fromNumber = settingsMap.TWILIO_PHONE_NUMBER;
+    const agentNumber = settingsMap.AGENT_PHONE_NUMBER;
 
     if (!accountSid || !authToken || !fromNumber) {
       return NextResponse.json(
@@ -42,14 +50,24 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    if (!agentNumber) {
+      return NextResponse.json(
+        {
+          error:
+            "Your phone number (Agent Phone) is not configured. Go to Settings to add your personal phone number so calls can be connected to you.",
+        },
+        { status: 400 }
+      );
+    }
+
     const client = twilio(accountSid, authToken);
 
-    // Create a TwiML response that connects the call to the agent's phone
-    // The call will connect the Twilio number to the lead's phone
+    // Twilio calls YOUR phone first. When you pick up, it says the lead name
+    // and connects you to the lead's phone.
     const call = await client.calls.create({
-      to,
-      from: fromNumber,
-      twiml: `<Response><Dial>${to}</Dial></Response>`,
+      to: agentNumber, // Call YOU first
+      from: fromNumber, // Your Twilio number shows on caller ID
+      twiml: `<Response><Say>Connecting you to the lead now.</Say><Dial callerId="${fromNumber}">${to}</Dial></Response>`,
     });
 
     // Update lead disposition if provided

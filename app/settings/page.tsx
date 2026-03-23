@@ -215,6 +215,25 @@ export default function SettingsPage() {
               autoComplete="off"
             />
           </div>
+
+          <div>
+            <label htmlFor="agent-phone" className="form-label">
+              Your Phone Number <span aria-hidden="true">*</span>
+            </label>
+            <p style={{ fontSize: "0.75rem", color: "var(--color-text-muted)", margin: "0 0 6px" }}>
+              Your personal phone number. When you click &quot;Call Now&quot;, Twilio will call your phone first, then connect you to the lead.
+            </p>
+            <input
+              id="agent-phone"
+              type="tel"
+              className="form-input"
+              value={settings[SETTING_KEYS.AGENT_PHONE_NUMBER] || ""}
+              onChange={(e) => updateSetting(SETTING_KEYS.AGENT_PHONE_NUMBER, e.target.value)}
+              placeholder="+1234567890"
+              aria-required="true"
+              autoComplete="off"
+            />
+          </div>
         </div>
       </section>
 
