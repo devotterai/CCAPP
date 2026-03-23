@@ -38,6 +38,7 @@ export async function POST(request: NextRequest) {
       "email address": "email",
       phone: "phone",
       "phone number": "phone",
+      phone_number: "phone",
       telephone: "phone",
       company: "company",
       "company name": "company",
