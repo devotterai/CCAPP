@@ -538,28 +538,6 @@ export default function Dashboard() {
             />
           </div>
 
-          {/* Filter */}
-          <div>
-            <label htmlFor="filter-disposition" className="sr-only">
-              Filter by status
-            </label>
-            <select
-              id="filter-disposition"
-              className="form-input"
-              value={filter}
-              onChange={(e) => setFilter(e.target.value)}
-              aria-label="Filter leads by disposition status"
-              style={{ minWidth: "160px" }}
-            >
-              <option value="ALL">All Statuses</option>
-              {Object.entries(DISPOSITION_LABELS).map(([key, label]) => (
-                <option key={key} value={key}>
-                  {label}
-                </option>
-              ))}
-            </select>
-          </div>
-
           {/* Import */}
           <div>
             <label htmlFor="csv-import" className="btn btn-primary" style={{ cursor: "pointer" }}>
@@ -598,6 +576,71 @@ export default function Dashboard() {
           >
             {leads.length} lead{leads.length !== 1 ? "s" : ""}
           </span>
+        </div>
+
+        {/* Status Tabs */}
+        <div
+          role="tablist"
+          aria-label="Filter by status"
+          style={{
+            display: "flex",
+            gap: "0",
+            padding: "0",
+            borderBottom: "1px solid var(--color-border)",
+            backgroundColor: "var(--color-bg-secondary)",
+            overflowX: "auto",
+            flexShrink: 0,
+          }}
+        >
+          <button
+            role="tab"
+            aria-selected={filter === "ALL"}
+            onClick={() => setFilter("ALL")}
+            style={{
+              flex: "1 1 auto",
+              padding: "10px 12px",
+              fontSize: "0.75rem",
+              fontWeight: 700,
+              border: "none",
+              borderBottom: filter === "ALL" ? "2px solid var(--color-accent)" : "2px solid transparent",
+              backgroundColor: filter === "ALL" ? "var(--color-bg-primary)" : "transparent",
+              color: filter === "ALL" ? "var(--color-accent)" : "var(--color-text-muted)",
+              cursor: "pointer",
+              textAlign: "center",
+              whiteSpace: "nowrap",
+              transition: "all 0.15s",
+            }}
+          >
+            All ({leads.length})
+          </button>
+          {Object.entries(DISPOSITION_LABELS).map(([key, label]) => {
+            const count = leads.filter(l => l.disposition === key).length;
+            return (
+              <button
+                key={key}
+                role="tab"
+                aria-selected={filter === key}
+                onClick={() => setFilter(key)}
+                style={{
+                  flex: "1 1 auto",
+                  padding: "10px 8px",
+                  fontSize: "0.7rem",
+                  fontWeight: 700,
+                  border: "none",
+                  borderBottom: filter === key ? "2px solid var(--color-accent)" : "2px solid transparent",
+                  backgroundColor: filter === key ? "var(--color-bg-primary)" : "transparent",
+                  color: filter === key ? "var(--color-accent)" : "var(--color-text-muted)",
+                  cursor: "pointer",
+                  textAlign: "center",
+                  whiteSpace: "nowrap",
+                  transition: "all 0.15s",
+                  opacity: count === 0 ? 0.4 : 1,
+                }}
+              >
+                {label} {count > 0 && <span style={{ color: "var(--color-text-muted)", fontWeight: 400 }}>({count})</span>}
+              </button>
+            );
+          })}
         </div>
 
         {/* Lead table */}
