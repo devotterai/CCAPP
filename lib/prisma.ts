@@ -1,5 +1,6 @@
 import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
+import pg from "pg";
 
 const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined;
@@ -8,12 +9,17 @@ const globalForPrisma = globalThis as unknown as {
 function createPrismaClient() {
   const connectionString = process.env.DATABASE_URL || "";
 
-  const adapter = new PrismaPg({
+  // Create pool manually with SSL enabled for Supabase
+  const pool = new pg.Pool({
     connectionString,
+    ssl: connectionString.includes("supabase")
+      ? { rejectUnauthorized: false }
+      : undefined,
     max: 5,
-    ssl: { rejectUnauthorized: false },
   });
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const adapter = new PrismaPg(pool as any);
   return new PrismaClient({ adapter });
 }
 
