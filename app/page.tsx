@@ -65,6 +65,27 @@ export default function Dashboard() {
   const [calling, setCalling] = useState(false);
   const [showShortcutsModal, setShowShortcutsModal] = useState(false);
 
+  // Dialer state
+  const [dialerNumber, setDialerNumber] = useState("");
+  const [showDialer, setShowDialer] = useState(false);
+  const [lastDtmfDigit, setLastDtmfDigit] = useState("");
+
+  // SMS state
+  const [smsBody, setSmsBody] = useState("");
+  const [sendingSms, setSendingSms] = useState(false);
+  type SmsLogEntry = {
+    id: string;
+    leadId: string;
+    leadName: string;
+    leadPhone: string;
+    body: string;
+    status: string;
+    twilioSid: string;
+    direction: string;
+    sentAt: string;
+  };
+  const [smsHistory, setSmsHistory] = useState<SmsLogEntry[]>([]);
+
   // Call-related state (must be before useEffect that references them)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const deviceRef = useRef<any>(null);
@@ -360,17 +381,23 @@ export default function Dashboard() {
 
   // Handle call using Twilio Voice SDK (browser-based)
 
-  // Fetch call history for selected lead
+  // Fetch call history and SMS history for selected lead
   useEffect(() => {
     if (selectedLead) {
       fetch(`/api/calls?leadId=${selectedLead.id}`)
         .then((r) => r.json())
         .then((data) => setCallHistory(Array.isArray(data) ? data : []))
         .catch(console.error);
+      fetch(`/api/sms?leadId=${selectedLead.id}`)
+        .then((r) => r.json())
+        .then((data) => setSmsHistory(Array.isArray(data) ? data : []))
+        .catch(console.error);
       setNotesValue(selectedLead.notes || "");
       setEditingNotes(false);
+      setSmsBody("");
     } else {
       setCallHistory([]);
+      setSmsHistory([]);
       setNotesValue("");
     }
   }, [selectedLead]);
@@ -523,6 +550,109 @@ export default function Dashboard() {
     }
   };
 
+  // DTMF digit map for the dialpad UI
+  const DIALPAD_KEYS = [
+    { digit: "1", sub: "" },
+    { digit: "2", sub: "ABC" },
+    { digit: "3", sub: "DEF" },
+    { digit: "4", sub: "GHI" },
+    { digit: "5", sub: "JKL" },
+    { digit: "6", sub: "MNO" },
+    { digit: "7", sub: "PQRS" },
+    { digit: "8", sub: "TUV" },
+    { digit: "9", sub: "WXYZ" },
+    { digit: "*", sub: "" },
+    { digit: "0", sub: "+" },
+    { digit: "#", sub: "" },
+  ];
+
+  // Send DTMF tone during active call
+  const handleSendDtmf = (digit: string) => {
+    if (activeCallRef.current) {
+      activeCallRef.current.sendDigits(digit);
+      setLastDtmfDigit(digit);
+      setTimeout(() => setLastDtmfDigit(""), 300);
+    }
+  };
+
+  // Dial any number via standalone dialer (reuses Device)
+  const handleDialerCall = async () => {
+    const cleanNumber = dialerNumber.replace(/[^0-9+*#]/g, "");
+    if (!cleanNumber) {
+      setActionStatus("Enter a phone number to dial");
+      announce("Cannot call: no phone number entered");
+      return;
+    }
+    if (callActive) {
+      handleHangUp();
+      return;
+    }
+    setCalling(true);
+    setActionStatus(`Dialing ${cleanNumber}...`);
+    announce(`Dialing ${cleanNumber}`);
+    try {
+      const tokenRes = await fetch("/api/token");
+      const tokenData = await tokenRes.json();
+      if (!tokenRes.ok) {
+        setActionStatus(tokenData.error || "Failed to get call token");
+        announce(tokenData.error || "Failed to get call token");
+        setCalling(false);
+        return;
+      }
+      const { Device } = await import("@twilio/voice-sdk");
+      if (!deviceRef.current) {
+        deviceRef.current = new Device(tokenData.token, { logLevel: 1 });
+      } else {
+        deviceRef.current.updateToken(tokenData.token);
+      }
+      const call = await deviceRef.current.connect({
+        params: { To: cleanNumber },
+      });
+      activeCallRef.current = call;
+      callStartTimeRef.current = new Date();
+      setCallActive(true);
+      setActionStatus(`Connected to ${cleanNumber}`);
+      announce("Call connected through your browser.");
+
+      // Log the dialer call (no leadId)
+      try {
+        const logRes = await fetch("/api/calls", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            leadId: null,
+            leadName: "Manual Dial",
+            leadPhone: cleanNumber,
+            callSid: call.parameters?.CallSid || "",
+            status: "in-progress",
+          }),
+        });
+        const logData = await logRes.json();
+        callLogIdRef.current = logData.id || "";
+      } catch { /* non-critical */ }
+
+      call.on("disconnect", () => handleHangUp());
+      call.on("cancel", () => {
+        activeCallRef.current = null;
+        setCallActive(false);
+        setCalling(false);
+        setActionStatus("Call cancelled");
+        announce("Call cancelled");
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Call failed";
+      setActionStatus(`Call failed: ${message}`);
+      announce("Call failed. Check your Twilio settings.");
+      setCalling(false);
+      setCallActive(false);
+    }
+  };
+
+  // Append digit to dialer number
+  const handleDialerDigit = (digit: string) => {
+    setDialerNumber((prev) => prev + digit);
+  };
+
   // Open email modal
   const openEmailModal = () => {
     if (!selectedLead?.email) {
@@ -534,6 +664,55 @@ export default function Dashboard() {
     setEmailSubject("");
     setEmailBody("");
     setSelectedTemplate("");
+  };
+
+  // Send SMS
+  const handleSendSms = async () => {
+    if (!selectedLead?.phone || !smsBody.trim()) {
+      setActionStatus("Phone number and message are required");
+      announce("Cannot send text: phone number and message are required");
+      return;
+    }
+
+    setSendingSms(true);
+    setActionStatus("Sending text message...");
+    announce(`Sending text to ${selectedLead.firstName} ${selectedLead.lastName}`);
+
+    try {
+      const res = await fetch("/api/sms", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          to: selectedLead.phone,
+          body: smsBody,
+          leadId: selectedLead.id,
+          leadName: `${selectedLead.firstName} ${selectedLead.lastName}`,
+        }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        setActionStatus(data.error || "Text failed to send");
+        announce(data.error || "Text failed to send");
+        return;
+      }
+
+      setActionStatus("Text sent successfully");
+      announce("Text message sent successfully");
+      setSmsBody("");
+
+      // Refresh SMS history
+      fetch(`/api/sms?leadId=${selectedLead.id}`)
+        .then((r) => r.json())
+        .then((data) => setSmsHistory(Array.isArray(data) ? data : []))
+        .catch(console.error);
+    } catch {
+      setActionStatus("Text failed — check Twilio settings");
+      announce("Text failed to send. Check your Twilio settings.");
+    } finally {
+      setSendingSms(false);
+    }
   };
 
   // Handle template selection
@@ -890,11 +1069,13 @@ export default function Dashboard() {
           <div
             style={{
               display: "flex",
+              flexDirection: "column",
               alignItems: "center",
               justifyContent: "center",
               height: "100%",
               color: "var(--color-text-muted)",
               textAlign: "center",
+              gap: "24px",
             }}
           >
             <div>
@@ -904,6 +1085,105 @@ export default function Dashboard() {
                 <kbd style={{ padding: "2px 8px", background: "var(--color-bg-tertiary)", borderRadius: "4px", fontSize: "0.75rem" }}>Tab</kbd> to navigate •{" "}
                 <kbd style={{ padding: "2px 8px", background: "var(--color-bg-tertiary)", borderRadius: "4px", fontSize: "0.75rem" }}>Enter</kbd> to select
               </p>
+            </div>
+
+            {/* Standalone Dialer — always available */}
+            <div className="card" style={{ width: "100%", maxWidth: "340px" }}>
+              <h3 style={{ fontSize: "0.875rem", fontWeight: 700, margin: "0 0 12px", textAlign: "center" }}>
+                📞 Dial a Number
+              </h3>
+              {actionStatus && (
+                <div
+                  role="status"
+                  aria-live="assertive"
+                  style={{
+                    padding: "8px 12px",
+                    marginBottom: "12px",
+                    borderRadius: "8px",
+                    fontSize: "0.8125rem",
+                    fontWeight: 600,
+                    backgroundColor: actionStatus.includes("fail") || actionStatus.includes("error") || actionStatus.includes("Error")
+                      ? "rgba(238, 68, 68, 0.15)" : "rgba(68, 187, 102, 0.15)",
+                    color: actionStatus.includes("fail") || actionStatus.includes("error") || actionStatus.includes("Error")
+                      ? "#ff6666" : "#66dd88",
+                  }}
+                >
+                  {actionStatus}
+                </div>
+              )}
+              <input
+                className="dialer-number-input"
+                type="tel"
+                value={dialerNumber}
+                onChange={(e) => setDialerNumber(e.target.value)}
+                placeholder="Enter phone number"
+                aria-label="Phone number to dial"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    handleDialerCall();
+                  }
+                }}
+              />
+              <div className="dialpad" style={{ marginTop: "12px" }}>
+                {DIALPAD_KEYS.map((key) => (
+                  <button
+                    key={key.digit}
+                    className="dialpad-btn"
+                    onClick={() => handleDialerDigit(key.digit)}
+                    aria-label={`Dial digit ${key.digit}`}
+                  >
+                    {key.digit}
+                    {key.sub && <span className="dialpad-sub">{key.sub}</span>}
+                  </button>
+                ))}
+              </div>
+              <div style={{ display: "flex", gap: "8px", marginTop: "12px" }}>
+                <button
+                  className="btn btn-secondary"
+                  onClick={() => setDialerNumber((prev) => prev.slice(0, -1))}
+                  disabled={!dialerNumber}
+                  style={{ flex: "0 0 auto", fontSize: "1rem", padding: "12px 18px" }}
+                  aria-label="Backspace"
+                >
+                  ⌫
+                </button>
+                <button
+                  className={callActive ? "btn btn-danger" : "btn btn-success"}
+                  onClick={callActive ? handleHangUp : handleDialerCall}
+                  disabled={!callActive && (calling || !dialerNumber.trim())}
+                  style={{ flex: 1, fontSize: "1rem", padding: "12px 20px" }}
+                  aria-label={callActive ? "Hang up" : `Call ${dialerNumber}`}
+                >
+                  {calling ? (callActive ? "🔴 Hang Up" : "Connecting...") : "📞 Call"}
+                </button>
+              </div>
+              {/* DTMF pad during active dialer call */}
+              {callActive && (
+                <div style={{ marginTop: "16px", borderTop: "1px solid var(--color-border)", paddingTop: "12px" }}>
+                  <h4 style={{ fontSize: "0.8125rem", fontWeight: 700, margin: "0 0 8px", textAlign: "center", color: "var(--color-text-secondary)" }}>
+                    🔢 DTMF Tones
+                  </h4>
+                  {lastDtmfDigit && (
+                    <div style={{ textAlign: "center", fontSize: "1.25rem", fontWeight: 700, color: "var(--color-accent)", marginBottom: "6px" }}>
+                      {lastDtmfDigit}
+                    </div>
+                  )}
+                  <div className="dialpad">
+                    {DIALPAD_KEYS.map((key) => (
+                      <button
+                        key={`dtmf-${key.digit}`}
+                        className="dialpad-btn"
+                        onClick={() => handleSendDtmf(key.digit)}
+                        aria-label={`Send DTMF tone ${key.digit}`}
+                      >
+                        {key.digit}
+                        {key.sub && <span className="dialpad-sub">{key.sub}</span>}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         ) : (
@@ -1044,7 +1324,44 @@ export default function Dashboard() {
               >
                 ✉️ Send Email
               </button>
+
+              <button
+                className="btn btn-primary"
+                onClick={() => document.getElementById("sms-compose")?.focus()}
+                disabled={!selectedLead.phone}
+                aria-label={`Send text to ${selectedLead.firstName} ${selectedLead.lastName} at ${selectedLead.phone || "no number"}`}
+                style={{ flex: 1, fontSize: "1rem", padding: "14px 20px", backgroundColor: "#8b5cf6" }}
+              >
+                💬 Send Text
+              </button>
             </div>
+
+            {/* DTMF Numberpad — shown only during active call */}
+            {callActive && (
+              <div className="card" style={{ marginBottom: "16px" }}>
+                <h3 style={{ fontSize: "0.875rem", fontWeight: 700, margin: "0 0 12px", textAlign: "center" }}>
+                  🔢 Dialpad (DTMF)
+                </h3>
+                {lastDtmfDigit && (
+                  <div style={{ textAlign: "center", fontSize: "1.5rem", fontWeight: 700, color: "var(--color-accent)", marginBottom: "8px", minHeight: "2rem" }}>
+                    {lastDtmfDigit}
+                  </div>
+                )}
+                <div className="dialpad">
+                  {DIALPAD_KEYS.map((key) => (
+                    <button
+                      key={key.digit}
+                      className="dialpad-btn"
+                      onClick={() => handleSendDtmf(key.digit)}
+                      aria-label={`Send DTMF tone ${key.digit}`}
+                    >
+                      {key.digit}
+                      {key.sub && <span className="dialpad-sub">{key.sub}</span>}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Keyboard shortcuts hint */}
             <p
@@ -1210,7 +1527,87 @@ export default function Dashboard() {
                     </div>
                   ))}
                 </div>
-              )}  
+              )}
+            </div>
+
+            {/* Text Messages */}
+            <div className="card" style={{ marginTop: "16px" }}>
+              <h3 style={{ fontSize: "0.875rem", fontWeight: 700, marginBottom: "12px", margin: "0 0 12px" }}>
+                💬 Text Messages
+              </h3>
+
+              {/* Compose */}
+              <div style={{ display: "flex", gap: "8px", marginBottom: "8px" }}>
+                <textarea
+                  id="sms-compose"
+                  className="form-input"
+                  value={smsBody}
+                  onChange={(e) => setSmsBody(e.target.value)}
+                  rows={2}
+                  placeholder={selectedLead.phone ? "Type a text message..." : "No phone number available"}
+                  disabled={!selectedLead.phone}
+                  aria-label="Compose text message"
+                  style={{ resize: "vertical", fontSize: "0.8125rem", flex: 1 }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && e.ctrlKey) {
+                      e.preventDefault();
+                      handleSendSms();
+                    }
+                  }}
+                />
+                <button
+                  className="btn btn-success"
+                  onClick={handleSendSms}
+                  disabled={sendingSms || !smsBody.trim() || !selectedLead.phone}
+                  style={{ alignSelf: "flex-end", fontSize: "0.8125rem", padding: "10px 16px" }}
+                  aria-label={sendingSms ? "Sending text" : "Send text message"}
+                >
+                  {sendingSms ? "Sending..." : "Send"}
+                </button>
+              </div>
+              <p style={{ fontSize: "0.6875rem", color: "var(--color-text-muted)", marginBottom: "12px" }}>
+                Press <kbd style={{ padding: "1px 4px", background: "var(--color-bg-tertiary)", borderRadius: "3px", fontSize: "0.625rem" }}>Ctrl+Enter</kbd> to send
+              </p>
+
+              {/* SMS History */}
+              {smsHistory.length === 0 ? (
+                <p style={{ fontSize: "0.8125rem", color: "var(--color-text-muted)", margin: 0 }}>
+                  No text messages yet.
+                </p>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                  {smsHistory.map((sms) => (
+                    <div
+                      key={sms.id}
+                      style={{
+                        padding: "10px 12px",
+                        borderRadius: "6px",
+                        backgroundColor: "var(--color-bg-secondary)",
+                        border: "1px solid var(--color-border)",
+                        fontSize: "0.8125rem",
+                      }}
+                    >
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
+                        <span style={{ fontWeight: 600 }}>
+                          {new Date(sms.sentAt).toLocaleDateString()} {new Date(sms.sentAt).toLocaleTimeString()}
+                        </span>
+                        <span style={{
+                          fontSize: "0.75rem",
+                          padding: "2px 8px",
+                          borderRadius: "4px",
+                          backgroundColor: "rgba(139, 92, 246, 0.15)",
+                          color: "#a78bfa",
+                        }}>
+                          {sms.status}
+                        </span>
+                      </div>
+                      <p style={{ margin: 0, color: "var(--color-text-secondary)", whiteSpace: "pre-wrap" }}>
+                        {sms.body}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         )}

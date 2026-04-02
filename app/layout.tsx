@@ -64,6 +64,13 @@ export default function RootLayout({
                 Call History
               </a>
               <a
+                href="/texts"
+                className="btn btn-secondary"
+                style={{ fontSize: "0.875rem", padding: "8px 16px" }}
+              >
+                Texts
+              </a>
+              <a
                 href="/settings"
                 className="btn btn-secondary"
                 style={{ fontSize: "0.875rem", padding: "8px 16px" }}

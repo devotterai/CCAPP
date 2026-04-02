@@ -53,3 +53,15 @@ model CallLog {
   startedAt     DateTime  @default(now())
   endedAt       DateTime?
 }
+
+model SmsLog {
+  id        String   @id @default(cuid())
+  leadId    String
+  leadName  String   @default("")
+  leadPhone String   @default("")
+  body      String
+  status    String   @default("sent")
+  twilioSid String   @default("")
+  direction String   @default("outbound")
+  sentAt    DateTime @default(now())
+}
