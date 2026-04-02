@@ -351,3 +351,63 @@ textarea:focus-visible {
   letter-spacing: 0;
   color: var(--color-text-muted);
 }
+
+/* Incoming call banner */
+.incoming-call-banner {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 3000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 20px 24px;
+  background: linear-gradient(135deg, #1a3a2a 0%, #0f2a1a 100%);
+  border-bottom: 2px solid var(--color-success);
+  box-shadow: 0 4px 24px rgba(68, 187, 102, 0.3);
+  animation: incomingPulse 2s ease-in-out infinite;
+}
+
+@keyframes incomingPulse {
+  0%, 100% { box-shadow: 0 4px 24px rgba(68, 187, 102, 0.3); }
+  50% { box-shadow: 0 4px 32px rgba(68, 187, 102, 0.6); }
+}
+
+@keyframes ringShake {
+  0%, 100% { transform: rotate(0deg); }
+  10% { transform: rotate(14deg); }
+  20% { transform: rotate(-14deg); }
+  30% { transform: rotate(10deg); }
+  40% { transform: rotate(-10deg); }
+  50% { transform: rotate(6deg); }
+  60% { transform: rotate(-6deg); }
+  70% { transform: rotate(2deg); }
+  80% { transform: rotate(-2deg); }
+  90% { transform: rotate(0deg); }
+}
+
+.incoming-call-ring-icon {
+  display: inline-block;
+  font-size: 1.5rem;
+  animation: ringShake 0.8s ease-in-out infinite;
+}
+
+/* Device status indicator */
+.device-status-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 6px;
+}
+
+.device-status-dot.online {
+  background: var(--color-success);
+  box-shadow: 0 0 6px rgba(68, 187, 102, 0.6);
+}
+
+.device-status-dot.offline {
+  background: var(--color-text-muted);
+}

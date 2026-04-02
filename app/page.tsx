@@ -70,6 +70,13 @@ export default function Dashboard() {
   const [showDialer, setShowDialer] = useState(false);
   const [lastDtmfDigit, setLastDtmfDigit] = useState("");
 
+  // Incoming call state
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [incomingCall, setIncomingCall] = useState<any>(null);
+  const [incomingFrom, setIncomingFrom] = useState("");
+  const [deviceReady, setDeviceReady] = useState(false);
+  const [matchedLead, setMatchedLead] = useState<Lead | null>(null);
+
   // SMS state
   const [smsBody, setSmsBody] = useState("");
   const [sendingSms, setSendingSms] = useState(false);
@@ -174,6 +181,108 @@ export default function Dashboard() {
       .then((r) => r.json())
       .then((data) => setTemplates(Array.isArray(data) ? data : []))
       .catch(console.error);
+  }, []);
+
+  // Auto-register Twilio Device on mount for incoming calls
+  useEffect(() => {
+    let refreshTimer: NodeJS.Timeout;
+    let mounted = true;
+
+    const initDevice = async () => {
+      try {
+        const tokenRes = await fetch("/api/token");
+        if (!tokenRes.ok) return;
+        const tokenData = await tokenRes.json();
+
+        const { Device } = await import("@twilio/voice-sdk");
+
+        if (!deviceRef.current) {
+          deviceRef.current = new Device(tokenData.token, { logLevel: 1 });
+        } else {
+          deviceRef.current.updateToken(tokenData.token);
+        }
+
+        const device = deviceRef.current;
+
+        device.on("registered", () => {
+          if (mounted) setDeviceReady(true);
+        });
+
+        device.on("unregistered", () => {
+          if (mounted) setDeviceReady(false);
+        });
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        device.on("incoming", (call: any) => {
+          if (!mounted) return;
+          const callerNumber = call.parameters?.From || "Unknown";
+          setIncomingCall(call);
+          setIncomingFrom(callerNumber);
+          announce(`Incoming call from ${callerNumber}`);
+
+          // Try to match caller to a lead
+          fetch(`/api/leads?search=${encodeURIComponent(callerNumber)}`)
+            .then((r) => r.json())
+            .then((data) => {
+              if (Array.isArray(data) && data.length > 0) {
+                setMatchedLead(data[0]);
+              } else {
+                setMatchedLead(null);
+              }
+            })
+            .catch(() => setMatchedLead(null));
+
+          // If caller hangs up before answer
+          call.on("cancel", () => {
+            if (mounted) {
+              setIncomingCall(null);
+              setIncomingFrom("");
+              setMatchedLead(null);
+              setActionStatus("Missed call");
+              announce("Incoming call was cancelled by the caller");
+            }
+          });
+
+          call.on("disconnect", () => {
+            if (mounted) {
+              handleHangUp();
+            }
+          });
+        });
+
+        device.on("error", (err: Error) => {
+          console.error("Twilio Device error:", err);
+        });
+
+        // Register the device to receive incoming calls
+        await device.register();
+
+        // Refresh token every 50 minutes
+        refreshTimer = setInterval(async () => {
+          try {
+            const res = await fetch("/api/token");
+            if (res.ok) {
+              const data = await res.json();
+              deviceRef.current?.updateToken(data.token);
+            }
+          } catch { /* token refresh failed, will retry */ }
+        }, 50 * 60 * 1000);
+
+      } catch (err) {
+        console.error("Failed to initialize Twilio Device:", err);
+      }
+    };
+
+    initDevice();
+
+    return () => {
+      mounted = false;
+      if (refreshTimer) clearInterval(refreshTimer);
+      if (deviceRef.current) {
+        deviceRef.current.unregister();
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Focus trap for email modal
@@ -831,7 +940,95 @@ export default function Dashboard() {
     }
   };
 
+  // Handle incoming call answer
+  const handleAnswerIncoming = () => {
+    if (!incomingCall) return;
+    incomingCall.accept();
+    activeCallRef.current = incomingCall;
+    callStartTimeRef.current = new Date();
+    setCallActive(true);
+    setCalling(true);
+    setActionStatus(`Connected to ${incomingFrom}`);
+    announce(`Answered call from ${incomingFrom}`);
+
+    // If we matched a lead, select them
+    if (matchedLead) {
+      setSelectedLead(matchedLead);
+    }
+
+    // Log the incoming call
+    fetch("/api/calls", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        leadId: matchedLead?.id || null,
+        leadName: matchedLead ? `${matchedLead.firstName} ${matchedLead.lastName}` : "Incoming Call",
+        leadPhone: incomingFrom,
+        callSid: incomingCall.parameters?.CallSid || "",
+        status: "in-progress",
+      }),
+    })
+      .then((r) => r.json())
+      .then((data) => { callLogIdRef.current = data.id || ""; })
+      .catch(() => { /* non-critical */ });
+
+    setIncomingCall(null);
+    setIncomingFrom("");
+    setMatchedLead(null);
+  };
+
+  // Handle incoming call reject
+  const handleRejectIncoming = () => {
+    if (!incomingCall) return;
+    incomingCall.reject();
+    setIncomingCall(null);
+    setIncomingFrom("");
+    setMatchedLead(null);
+    setActionStatus("Call rejected");
+    announce("Incoming call rejected");
+  };
+
   return (
+    <>
+      {/* Incoming call notification banner */}
+      {incomingCall && (
+        <div className="incoming-call-banner" role="alert" aria-live="assertive">
+          <span className="incoming-call-ring-icon">📞</span>
+          <div style={{ textAlign: "center" }}>
+            <div style={{ fontSize: "1.125rem", fontWeight: 700, color: "var(--color-text-primary)" }}>
+              Incoming Call
+            </div>
+            <div style={{ fontSize: "1rem", color: "var(--color-text-secondary)", fontFamily: "monospace", marginTop: "2px" }}>
+              {incomingFrom || "Unknown Number"}
+            </div>
+            {matchedLead && (
+              <div style={{ fontSize: "0.875rem", color: "var(--color-accent)", marginTop: "4px", fontWeight: 600 }}>
+                {matchedLead.firstName} {matchedLead.lastName}
+                {matchedLead.company ? ` — ${matchedLead.company}` : ""}
+              </div>
+            )}
+          </div>
+          <div style={{ display: "flex", gap: "12px" }}>
+            <button
+              className="btn btn-success"
+              onClick={handleAnswerIncoming}
+              style={{ fontSize: "1rem", padding: "12px 28px" }}
+              aria-label="Answer incoming call"
+            >
+              ✅ Answer
+            </button>
+            <button
+              className="btn btn-danger"
+              onClick={handleRejectIncoming}
+              style={{ fontSize: "1rem", padding: "12px 28px" }}
+              aria-label="Reject incoming call"
+            >
+              ❌ Reject
+            </button>
+          </div>
+        </div>
+      )}
+
     <div style={{ display: "flex", height: "calc(100vh - 57px)" }}>
       {/* Left panel: Lead list */}
       <section
@@ -1823,5 +2020,6 @@ export default function Dashboard() {
         </div>
       )}
     </div>
+    </>
   );
 }

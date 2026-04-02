@@ -4,28 +4,47 @@ import twilio from "twilio";
 
 const VoiceResponse = twilio.twiml.VoiceResponse;
 
-// POST /api/voice — TwiML webhook called by Twilio when browser makes a call
+// POST /api/voice — TwiML webhook called by Twilio for both outbound and inbound calls
 export async function POST(request: NextRequest) {
   try {
     const formData = await request.formData();
     const to = formData.get("To") as string;
+    const from = formData.get("From") as string;
+    const direction = formData.get("Direction") as string;
 
     const twiml = new VoiceResponse();
 
-    if (to) {
-      // Get the Twilio phone number for caller ID
-      const phoneSetting = await prisma.setting.findFirst({
-        where: { key: "TWILIO_PHONE_NUMBER" },
-      });
-      const callerId = phoneSetting?.value || "";
+    // Get the Twilio phone number from settings
+    const phoneSetting = await prisma.setting.findFirst({
+      where: { key: "TWILIO_PHONE_NUMBER" },
+    });
+    const twilioNumber = phoneSetting?.value || "";
 
-      // Get the base URL for recording callback
+    // Determine if this is an INBOUND call (someone calling the Twilio number)
+    // Inbound: "To" matches our Twilio number, or direction is "inbound"
+    const isInbound =
+      direction === "inbound" ||
+      (to && twilioNumber && to.replace(/\s/g, "") === twilioNumber.replace(/\s/g, ""));
+
+    if (isInbound) {
+      // Route incoming call to the browser client
+      twiml.say({ voice: "alice" }, "Please hold while we connect you.");
+      const dial = twiml.dial({
+        callerId: from || twilioNumber,
+        record: "record-from-answer-dual",
+        recordingStatusCallback: `${getBaseUrl(request)}/api/recording-status`,
+        recordingStatusCallbackMethod: "POST",
+        recordingStatusCallbackEvent: ["completed"],
+      });
+      dial.client("ccapp-agent");
+    } else if (to) {
+      // OUTBOUND call from the browser — dial the target number
       const host = request.headers.get("host") || "";
       const protocol = host.includes("localhost") ? "http" : "https";
       const baseUrl = `${protocol}://${host}`;
 
       const dial = twiml.dial({
-        callerId,
+        callerId: twilioNumber,
         record: "record-from-answer-dual",
         recordingStatusCallback: `${baseUrl}/api/recording-status`,
         recordingStatusCallbackMethod: "POST",
@@ -38,9 +57,7 @@ export async function POST(request: NextRequest) {
 
     return new NextResponse(twiml.toString(), {
       status: 200,
-      headers: {
-        "Content-Type": "text/xml",
-      },
+      headers: { "Content-Type": "text/xml" },
     });
   } catch (error) {
     console.error("Error in voice webhook:", error);
@@ -49,11 +66,16 @@ export async function POST(request: NextRequest) {
 
     return new NextResponse(twiml.toString(), {
       status: 200,
-      headers: {
-        "Content-Type": "text/xml",
-      },
+      headers: { "Content-Type": "text/xml" },
     });
   }
+}
+
+// Helper to derive base URL from request
+function getBaseUrl(request: NextRequest): string {
+  const host = request.headers.get("host") || "";
+  const protocol = host.includes("localhost") ? "http" : "https";
+  return `${protocol}://${host}`;
 }
 
 // Also handle GET for Twilio webhook verification
@@ -63,8 +85,6 @@ export async function GET() {
 
   return new NextResponse(twiml.toString(), {
     status: 200,
-    headers: {
-      "Content-Type": "text/xml",
-    },
+    headers: { "Content-Type": "text/xml" },
   });
 }

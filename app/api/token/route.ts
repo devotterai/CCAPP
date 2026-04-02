@@ -50,7 +50,7 @@ export async function GET() {
     // Create a Voice grant and add it to the token
     const voiceGrant = new VoiceGrant({
       outgoingApplicationSid: twimlAppSid,
-      incomingAllow: false,
+      incomingAllow: true,
     });
 
     token.addGrant(voiceGrant);
