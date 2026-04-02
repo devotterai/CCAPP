@@ -27,8 +27,7 @@ export async function POST(request: NextRequest) {
       (to && twilioNumber && to.replace(/\s/g, "") === twilioNumber.replace(/\s/g, ""));
 
     if (isInbound) {
-      // Route incoming call to the browser client
-      twiml.say({ voice: "alice" }, "Please hold while we connect you.");
+      // Route incoming call to the browser client (caller hears ringing)
       const dial = twiml.dial({
         callerId: from || twilioNumber,
         record: "record-from-answer-dual",

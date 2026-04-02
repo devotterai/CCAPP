@@ -1002,9 +1002,30 @@ export default function Dashboard() {
               {incomingFrom || "Unknown Number"}
             </div>
             {matchedLead && (
-              <div style={{ fontSize: "0.875rem", color: "var(--color-accent)", marginTop: "4px", fontWeight: 600 }}>
-                {matchedLead.firstName} {matchedLead.lastName}
-                {matchedLead.company ? ` — ${matchedLead.company}` : ""}
+              <div style={{ marginTop: "6px", textAlign: "left", background: "rgba(255,255,255,0.05)", borderRadius: "8px", padding: "10px 14px" }}>
+                <div style={{ fontSize: "1rem", fontWeight: 700, color: "var(--color-accent)", marginBottom: "4px" }}>
+                  {matchedLead.firstName} {matchedLead.lastName}
+                </div>
+                {matchedLead.company && (
+                  <div style={{ fontSize: "0.8125rem", color: "var(--color-text-secondary)" }}>
+                    🏢 {matchedLead.company}
+                  </div>
+                )}
+                {matchedLead.email && (
+                  <div style={{ fontSize: "0.8125rem", color: "var(--color-text-secondary)" }}>
+                    ✉️ {matchedLead.email}
+                  </div>
+                )}
+                {(matchedLead.city || matchedLead.state) && (
+                  <div style={{ fontSize: "0.8125rem", color: "var(--color-text-secondary)" }}>
+                    📍 {[matchedLead.city, matchedLead.state].filter(Boolean).join(", ")}
+                  </div>
+                )}
+                {matchedLead.notes && (
+                  <div style={{ fontSize: "0.75rem", color: "var(--color-text-muted)", marginTop: "4px", fontStyle: "italic" }}>
+                    📝 {matchedLead.notes.length > 80 ? matchedLead.notes.slice(0, 80) + "..." : matchedLead.notes}
+                  </div>
+                )}
               </div>
             )}
           </div>
